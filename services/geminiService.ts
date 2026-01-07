@@ -1,15 +1,12 @@
-
 import { GoogleGenAI, Type } from "@google/genai";
-import { DesignBlueprint, CardOutline } from "../types";
+import { DesignBlueprint } from "../types";
 
-const ai = new GoogleGenAI({ 
-  apiKey: import.meta.env.VITE_GEMINI_API_KEY || '',
-  baseUrl: import.meta.env.VITE_GEMINI_BASE_URL || 'https://generativelanguage.googleapis.com' 
-});
+// 必须严格使用 process.env.API_KEY 初始化
+const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
 /**
- * Utility function to handle API retries with exponential backoff.
- * Especially useful for 429 (Rate Limit) errors.
+ * 指数退避重试工具函数
+ * 专门处理 429 Resource Exhausted (配额限制)
  */
 const withRetry = async <T>(fn: () => Promise<T>, retries = 3, delay = 3000): Promise<T> => {
   try {
@@ -22,7 +19,7 @@ const withRetry = async <T>(fn: () => Promise<T>, retries = 3, delay = 3000): Pr
                         error?.code === 429;
     
     if (retries > 0 && isRateLimit) {
-      console.warn(`Rate limit hit. Retrying in ${delay}ms... (${retries} retries left)`);
+      console.warn(`检测到配额限制，${delay}ms 后重试... (剩余重试次数: ${retries})`);
       await new Promise(resolve => setTimeout(resolve, delay));
       return withRetry(fn, retries - 1, delay * 2);
     }
@@ -33,7 +30,7 @@ const withRetry = async <T>(fn: () => Promise<T>, retries = 3, delay = 3000): Pr
 export const analyzeDocument = async (text: string, preferredStyle: string = 'Auto'): Promise<DesignBlueprint> => {
   return withRetry(async () => {
     const styleInstruction = preferredStyle === 'Auto' 
-      ? "从（学术典雅、现代知识、科技简约、手绘笔记、商务专业）中选择最匹配的。" 
+      ? "从（Academic, Modern, Tech, Handwritten, Business）中选择最匹配的风格。" 
       : `强制使用指定风格：${preferredStyle}。`;
 
     const response = await ai.models.generateContent({
@@ -42,9 +39,9 @@ export const analyzeDocument = async (text: string, preferredStyle: string = 'Au
       
       任务要求：
       1. 智能解构：将源文档拆解为系列知识卡片。
-      2. **封面卡片（必须）：生成的 cardOutlines 数组的第一个元素必须是“封面卡片”。其标题为文档总标题，内容点为全文的核心精华总结。**
+      2. **封面卡片（必须）：生成的 cardOutlines 数组的第一个元素必须是“封面卡片”。**
       3. 卡片序列规划：后续卡片按逻辑拆解，严格遵守 7:11.6 比例（700x1160px）。
-      4. 风格方案：${styleInstruction}
+      4. 风格方案：${styleInstruction} (请确保 style 字段返回对应的英文 Key)
       5. 视觉方案：定义主题色、辅助色及字体配对建议。
 
       源文档内容：
@@ -54,14 +51,14 @@ export const analyzeDocument = async (text: string, preferredStyle: string = 'Au
         responseSchema: {
           type: Type.OBJECT,
           properties: {
-            style: { type: Type.STRING, description: "视觉风格名称" },
+            style: { type: Type.STRING, description: "视觉风格 Key (Academic/Modern/Tech/Handwritten/Business)" },
             themeColor: { type: Type.STRING, description: "主题 HEX 颜色" },
             secondaryColor: { type: Type.STRING, description: "辅助 HEX 颜色" },
             fontPairing: {
               type: Type.OBJECT,
               properties: {
-                heading: { type: Type.STRING, description: "标题建议字体" },
-                body: { type: Type.STRING, description: "正文建议字体" }
+                heading: { type: Type.STRING },
+                body: { type: Type.STRING }
               },
               required: ["heading", "body"]
             },
@@ -70,13 +67,13 @@ export const analyzeDocument = async (text: string, preferredStyle: string = 'Au
               items: {
                 type: Type.OBJECT,
                 properties: {
-                  title: { type: Type.STRING, description: "该张卡片的主题" },
-                  points: { type: Type.ARRAY, items: { type: Type.STRING }, description: "核心要点列表" }
+                  title: { type: Type.STRING },
+                  points: { type: Type.ARRAY, items: { type: Type.STRING } }
                 },
                 required: ["title", "points"]
               }
             },
-            description: { type: Type.STRING, description: "设计思路与规范提案摘要" }
+            description: { type: Type.STRING }
           },
           required: ["style", "themeColor", "secondaryColor", "fontPairing", "cardOutlines", "description"]
         }
@@ -106,20 +103,11 @@ export const generateCardHTML = async (
       - 主题色：${blueprint.themeColor}
       - 辅助色：${blueprint.secondaryColor}
       - 进度：${cardIndex + 1}/${total}
-      - 是否为封面：${isCover ? '是' : '否'}
       
       严格设计规范：
-      1. 尺寸约束：宽度锁定 700px，高度锁定 1160px。禁止滚动条。
-      2. 全局样式：必须包含 * { box-sizing: border-box; -webkit-font-smoothing: antialiased; } 且 body { margin: 0; padding: 0; overflow: hidden; font-family: 'Inter', sans-serif; }
-      3. **CORS 与 导出兼容性 (重要)：**
-         - 为了支持图片导出，所有 <link> 标签必须严格包含 crossorigin="anonymous" 属性。
-         - 推荐使用 Google Fonts 链接，如：<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;700&display=swap" rel="stylesheet" crossorigin="anonymous">
-      4. **署名要求：**
-         - 左下角署名：@不想上班计划 AI提效 少工作 多赚钱。使用精致排版。
-      5. **内容组件系统：**
-         - 封面卡片设计：英雄模式，大标题居中。
-         - 正文卡片设计：页眉 + 主体 + 页脚。
-         - 视觉丰富度：使用强调卡片、逻辑连接线、标签、徽章等图解元素。
+      1. 尺寸约束：宽度锁定 700px，高度锁定 1160px。
+      2. 导出兼容性：所有外部资源链接必须包含 crossorigin="anonymous"。
+      3. **署名要求：** 每个卡片左下角必须优雅地展示署名：@不想上班计划 AI提效 少工作 多赚钱。
       
       输出要求：
       只返回完整的 HTML 代码块。
@@ -130,7 +118,7 @@ export const generateCardHTML = async (
       contents: prompt,
       config: {
         temperature: 0.8,
-        systemInstruction: "你是一个专家级前端排版师。生成的 HTML 必须包含完整的 CSS 且能够离线或通过 CORS 兼容链接渲染。重点确保图片导出不触发 SecurityError。每个卡片左下角署名必须是：@不想上班计划 AI提效 少工作 多赚钱。",
+        systemInstruction: "你是一个世界级的视觉排版专家。生成的 HTML 必须具备极高的组件化美感，并确保左下角署名为：@不想上班计划 AI提效 少工作 多赚钱。",
       }
     });
 
