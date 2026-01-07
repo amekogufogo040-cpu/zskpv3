@@ -2,7 +2,10 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { DesignBlueprint, CardOutline } from "../types";
 
-const ai = new GoogleGenAI({ apiKey: import.meta.env.VITE_GEMINI_API_KEY || '' });
+const ai = new GoogleGenAI({ 
+  apiKey: import.meta.env.VITE_GEMINI_API_KEY || '',
+  baseUrl: import.meta.env.VITE_GEMINI_BASE_URL || 'https://generativelanguage.googleapis.com' 
+});
 
 /**
  * Utility function to handle API retries with exponential backoff.
